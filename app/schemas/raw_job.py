@@ -8,12 +8,12 @@ class JobSourceEnum(str, Enum):
     ADZUNA = "adzuna"
     REMOTIVE = "remotive"
     JUSTJOINIT = 'justjoinit'
-    NOFLUFFJOBS = 'nonfluffjobs'
+    NOFLUFFJOBS = 'nofluffjobs'
 
 class RawJob(BaseModel):
     title: str 
     company: str
-    location: Optional[str]
+    location: Optional[str] = None
     is_remote: bool = False
     description: str
     job_types: list[str] = []

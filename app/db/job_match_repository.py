@@ -16,7 +16,8 @@ class JobMatchRepository():
             job_id=result.job_id,
             relevance_score=result.relevance_score,
             reasoning=result.reasoning,
-            status=result.status
+            status=result.status,
+            analysis=result.analysis,
         )
         self.session.add(match)
         try:
@@ -30,7 +31,7 @@ class JobMatchRepository():
     async def get_by_job_id(self, job_id: int) -> JobMatch | None:
         result = await self.session.execute(
             select(JobMatch)
-            .where(JobMatch.id == job_id)
+            .where(JobMatch.job_id == job_id)
         ) 
 
         return result.scalar_one_or_none()

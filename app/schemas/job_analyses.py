@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class JobAnalysisResult(BaseModel):
     required_skills: list[str] = []
@@ -7,5 +7,5 @@ class JobAnalysisResult(BaseModel):
     soft_skills: list[str] = []
     ats_keywords: list[str] = []
     seniority: str| None = None
-    min_years_experience: int | None = None
+    min_years_experience: int | None = Field(default=None, ge=0)
 
