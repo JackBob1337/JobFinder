@@ -1,0 +1,15 @@
+sqlalchemy
+asyncpg
+alembic
+pydantic-settings
+python-dotenv
+fastapi
+uvicorn
+requests
+httpx
+beautifulsoup4
+openai 
+python-docx
+apify-client
+pytest
+pytest-asyncio
