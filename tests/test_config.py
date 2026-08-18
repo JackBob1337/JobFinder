@@ -9,7 +9,6 @@ from pydantic import ValidationError
 from app.core.config import Settings
 
 
-
 def test_settings_are_created_from_environment(monkeypatch):
     monkeypatch.setenv(
         'DATABASE_URL',
