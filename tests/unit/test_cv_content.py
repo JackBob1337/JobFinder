@@ -52,7 +52,6 @@ def test_cv_content_as_text_contains_summary_experience_and_projects():
 
     text = content.as_text()
 
-    print(text)
 
     assert "PROFESSIONAL SUMMARY:" in text
     assert "Experienced Python developer" in text

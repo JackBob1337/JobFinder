@@ -14,8 +14,8 @@ class JobRepository:
     async def save(self, raw_job: RawJob) -> Job | None:
         existing = await self.session.execute(
             select(Job).where(
-                Job.title == raw_job.title,
-                Job.company == raw_job.company,
+                Job.source == raw_job.source,
+                Job.url == str(raw_job.url),
             )
         )
 

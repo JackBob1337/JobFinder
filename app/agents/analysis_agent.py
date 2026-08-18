@@ -92,12 +92,11 @@ def safe_parse_years(value) -> int | None:
     if isinstance(value, int):
         return value
     if isinstance(value, str):
-        # пробуем вытащить число из строки, если оно там есть
         import re
         match = re.search(r'\d+', value)
         if match:
             return int(match.group())
-        return None  # текст без числа вообще ("mehrjährige Erfahrung") — не можем извлечь
+        return None  
     return None
 
 class AnalysisAgent:
