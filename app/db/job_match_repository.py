@@ -4,6 +4,7 @@ from app.schemas.job_match import JobMatchResult
 from app.models.job_match import JobMatch
 
 from sqlalchemy.exc import IntegrityError
+from app.exceptions.exceptions import ForeignKeyViolationError
 
 
 class JobMatchRepository():
@@ -24,9 +25,20 @@ class JobMatchRepository():
             await self.session.commit()
             return match
 
-        except IntegrityError:
+        except IntegrityError as exc:
             await self.session.rollback()
-            return None
+
+            sqlstate = getattr(exc.orig, 'sqlstate', None)
+
+            if sqlstate == '23505':
+                return None
+
+            if sqlstate == '23503':
+                raise ForeignKeyViolationError(
+                    'Job match references a non-existing job'
+                ) from exc
+
+            raise                
 
     async def get_by_job_id(self, job_id: int) -> JobMatch | None:
         result = await self.session.execute(

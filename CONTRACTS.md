@@ -125,7 +125,7 @@ Rules:
 * automatic reprocessing is forbidden after `completed`, `approved`, `rejected`;
 * reprocessing is allowed only when explicity requested with `replaced` or `force`
 
-## Service result DTO 
+## Service result DTO
 
 All pipeline services must return a consistent result structure
 
@@ -151,3 +151,11 @@ Invariants:
 - `errors` must contain one entry for every failed item;
 - a successfull pipeline execution must not raise an exception for an individual item;
 - item-level erros must be collected in `erros`
+
+## Transaction ownership
+
+Repositories own commit and rollback operations
+
+Each vacancy is processed in an independent transaction
+
+A failure for one vacancy must not roll back successfully processed vacancies

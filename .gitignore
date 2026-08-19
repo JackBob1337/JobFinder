@@ -17,3 +17,8 @@ data/*.docx
 data/tailored/
 nofluffjobs_output.txt
 *.log
+
+# Database backups
+backups/
+*.dump
+*.sql

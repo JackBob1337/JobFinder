@@ -24,6 +24,8 @@ from app.core.logger import logger
 class JobProcessingService:
     ANALYZE_CONCURRENCY = 5
     FILTER_CONCURRENCY = 5
+    ANALYSIS_BATCH_SIZE = 100
+    FILTER_BATCH_SIZE = 100
 
     def __init__(
         self,
@@ -76,6 +78,8 @@ class JobProcessingService:
                 if job_for_analysis is None:
                     logger.warning(f"[analyze] Job {job.id} is not found")
 
+                    return False
+
                 try:
                     result = await self.analysis_agent.analyze(job)
                     await analysis_repo.save(job.id, result, raw_json=result.model_dump())
@@ -111,7 +115,14 @@ class JobProcessingService:
 
                 try:
                     result = await self.filter_agent.evaluate(job, analysis)
-                    await match_repo.save(result)
+                    saved_match = await match_repo.save(result)
+
+                    if saved_match is None:
+                        logger.warning(
+                            f"[filter] Match for job {job.id} was not saved"
+                        )
+                        return False
+                    
                     logger.info(f"[filter] {job.title}: {result.status} (score: {result.relevance_score})")
                     return True
                 
@@ -135,7 +146,9 @@ class JobProcessingService:
     async def analyze_new_jobs(self) -> dict:
         async with self.session_factory() as session:
             job_repo = JobRepository(session)
-            jobs = await job_repo.get_jobs_without_analysis()
+            jobs = await job_repo.get_jobs_without_analysis(
+                limit=self.ANALYSIS_BATCH_SIZE
+            )
         
         logger.info(f'[analyze] Found {len(jobs)} jobs without analyze')
 
@@ -150,7 +163,9 @@ class JobProcessingService:
     async def filter_analyzed_jobs(self):
         async with self.session_factory() as session:
             job_repo = JobRepository(session)
-            jobs = await job_repo.get_analyzed_but_unfiltered_jobs()
+            jobs = await job_repo.get_analyzed_but_unfiltered_jobs(
+                limit=self.FILTER_BATCH_SIZE
+            )
         
         logger.info(f'[filter] Found {len(jobs)} vacancies')
 
@@ -170,7 +185,10 @@ class JobProcessingService:
             scraped = await self.scrape_and_save()
 
         except DatabaseConnectionError:
-            logger.critical('Database unreachable during scrape, continuing with existing jobs')
+            logger.critical(
+                'Database unreachable during scrape'
+            )
+            raise
        
         total_analyzed = await self.analyze_new_jobs()
         total_filtered = await self.filter_analyzed_jobs()
