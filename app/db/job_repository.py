@@ -7,12 +7,15 @@ from sqlalchemy.exc import (
 )
 from app.exceptions.exceptions import (
     DatabaseUnavailableError,
-    ForeignKeyViolationError
+    DatabaseConnectionError,
+    ForeignKeyViolationError,
+    RepositoryError
 )
 
 
 from app.models.job import Job
 from app.schemas.raw_job import RawJob
+from app.schemas.results import RepositoryResult, ResultError
 from app.models.job_match import JobMatch
 from app.models.job_analyses import JobAnalysis
 
@@ -80,14 +83,41 @@ class JobRepository:
 
             raise
         
-    async def save_bulk(self, raw_jobs: list[RawJob]) -> int:
-        saved_count = 0
+    async def save_bulk(self, raw_jobs: list[RawJob]) -> RepositoryResult:
+        succeeded = 0
+        skipped = 0
+        failed = 0
+        errors: list[ResultError] = []
+
         for raw_job in raw_jobs:
-            result = await self.save(raw_job)
-            if result is not None:
-                saved_count += 1
-        
-        return saved_count
+            try:
+                saved_job = await self.save(raw_job)
+
+                if saved_job is None:
+                    skipped += 1
+                else:
+                    succeeded += 1
+
+            except DatabaseConnectionError:
+                raise
+
+            except RepositoryError as exc:
+                failed += 1
+                errors.append(
+                    ResultError(
+                        item_id=str(raw_job.url),
+                        message=str(exc)
+                    )
+                )
+
+        return RepositoryResult(
+            total=len(raw_jobs),
+            succeeded=succeeded,
+            skipped=skipped,
+            failed=failed,
+            errors=errors
+        )
+
     
     async def get_all(self) -> list[Job]: 
         result = await self.session.execute(select(Job))

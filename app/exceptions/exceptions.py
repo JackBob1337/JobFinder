@@ -1,3 +1,23 @@
+class SourceFetchException(Exception):
+    def __init__(self, source_name: str, cause: Exception):
+        self.source_name = source_name
+        self.cause = cause
+        super().__init__(
+            f'Failed to fetch jobs from {source_name}: {cause}'
+        )
+
+class TransientSourceFetchException(SourceFetchException):
+    """Timeout, transport failure, 408/425/429 or selected 5xx."""
+
+
+class InvalidSourcePayloadException(SourceFetchException):
+    """Provider returned malformed or incompatible data."""
+
+
+class SourceConfigurationException(SourceFetchException):
+    """Required source configuration is missing or invalid."""
+
+
 class RepositoryError(Exception):
     """Base exception for repository errors."""
 
@@ -12,19 +32,6 @@ class DatabaseUnavailableError(DatabaseConnectionError):
 
 class ForeignKeyViolationError(RepositoryError):
     """Raised when a foreign key constraint is violated."""
-
-
-class SourceFetchException(Exception):
-    """Raised when fetching jobs from a source fails."""
-
-    def __init__(self, source_name: str, cause: Exception):
-        self.source_name = source_name
-        self.cause = cause
-
-        super().__init__(
-            f"Failed to fetch jobs from {source_name}: {cause}"
-        )
-
 
 class FilterError(Exception):
     """Raised when job filtering fails."""

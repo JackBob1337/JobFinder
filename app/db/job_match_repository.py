@@ -12,7 +12,6 @@ class JobMatchRepository():
         self.session = session
 
     async def save(self, result: JobMatchResult) -> JobMatch | None:
-
         match = JobMatch(
             job_id=result.job_id,
             relevance_score=result.relevance_score,

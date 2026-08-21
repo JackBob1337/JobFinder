@@ -26,7 +26,7 @@ class NoFluffJobsSearch:
 
 class NoFluffJobsSource(JobSource):
     BASE_URL = "https://nofluffjobs.com/api/search/posting"
-    name = 'nofluffjobs'
+    name = JobSourceEnum.NOFLUFFJOBS.value
 
     HEADERS = {
         "accept": "application/json, text/plain, */*",
@@ -197,7 +197,7 @@ class NoFluffJobsSource(JobSource):
         return None
 
 
-    async def fetch_jobs(self, query: str = 'python') -> list[RawJob]:
+    async def fetch_jobs(self) -> list[RawJob]:
         search = NoFluffJobsSearch()
         params = self._build_params(search)
         payload = self._build_payload(search, query)

@@ -10,7 +10,7 @@
 
 Use just:
 
-- nofluffjob
+- nofluffjobs
 
 ## Vacancy field semantic
 
@@ -134,6 +134,7 @@ Required fields:
 - `total` - total number of processed items;
 - `succeede` - number of successfully processed items;
 - `failed` - number of failed items;
+- `skipped` - number of skipped items
 - `errors` - list of errors with item identifiers and messages
 
 Optional fields:

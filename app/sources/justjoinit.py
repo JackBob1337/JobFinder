@@ -14,7 +14,7 @@ from app.exceptions.exceptions import SourceFetchException
 
 class JustJoinItSource(JobSource):
     ACTOR_ID = "trev0n/justjoinit-scraper"
-    name = 'justjoinit'
+    name = JobSourceEnum.JUSTJOINIT.value
 
     @staticmethod
     def _normalize_required_skills(required_skills: list[object] | None) -> list[str]:
@@ -97,7 +97,7 @@ class JustJoinItSource(JobSource):
 
         return run.default_dataset_id, client
 
-    async def fetch_jobs(self, query: str = 'python') -> list[RawJob]:
+    async def fetch_jobs(self) -> list[RawJob]:
         dataset_id, client = await self._run_actor(query)
 
         try:

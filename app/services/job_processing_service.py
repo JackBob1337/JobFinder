@@ -18,6 +18,11 @@ from app.exceptions.exceptions import (
     RepositoryError,
     FilterError
 )
+from app.schemas.results import (
+    ResultError,
+    ServiceResult,
+    PipelineResult,
+)
 
 from app.core.logger import logger
 
@@ -39,6 +44,21 @@ class JobProcessingService:
         self.analysis_agent = analysis_agent
         self.filter_agent = filter_agent
 
+    @staticmethod
+    def _build_analysis_result(analyzed_job) -> JobAnalysisResult:
+        return JobAnalysisResult(
+            required_skills=analyzed_job.required_skills,
+            preferred_skills=analyzed_job.preferred_skills,
+            responsibilities=analyzed_job.responsibilities,
+            soft_skills=analyzed_job.raw_json.get(
+                "soft_skills",
+                [],
+            ),
+            ats_keywords=analyzed_job.ats_keywords,
+            seniority=analyzed_job.seniority,
+            min_years_experience=analyzed_job.min_years_experience,
+        )
+
     async def _fetch_from_source(self, source) -> list[RawJob]:
         try:
             return await source.fetch_jobs()
@@ -46,28 +66,63 @@ class JobProcessingService:
             logger.exception('Source fetch failed')
             return []
 
-    async def _save_jobs(self, source_name: str, raw_jobs: list[RawJob]) -> int:
+    async def _save_jobs(self, source_name: str, raw_jobs: list[RawJob]) -> ServiceResult:
         if not raw_jobs:
-            return 0
+            return ServiceResult(
+                total=0,
+                succeeded=0,
+                skipped=0,
+                failed=0,
+                errors=[],
+            )
 
         try:
             async with self.session_factory() as session:
                 job_repo = JobRepository(session)
-                return await job_repo.save_bulk(raw_jobs)
+                repository_result = await job_repo.save_bulk(raw_jobs)
+                return ServiceResult(
+                    total=repository_result.total,
+                    succeeded=repository_result.succeeded,
+                    skipped=repository_result.skipped,
+                    failed=repository_result.failed,
+                    errors=repository_result.errors,
+                )
 
         except DatabaseConnectionError:
             logger.critical("Database unreachable, aborting scrape")
             raise
 
-        except RepositoryError:
-            logger.exception("Failed to save jobs from %s", source_name)
-            return 0
+        except RepositoryError as exc:
+            logger.exception(
+                "Failed to save jobs from %s",
+                source_name,
+            )
 
-    async def _process_source(self, source) -> int:
+            errors = [
+                ResultError(
+                    item_id=str(raw_job.url),
+                    message=str(exc),
+                )
+                for raw_job in raw_jobs
+            ]
+
+            return ServiceResult(
+                total=len(raw_jobs),
+                succeeded=0,
+                skipped=0,
+                failed=len(raw_jobs),
+                errors=errors,
+            )
+
+    async def _process_source(self, source) -> ServiceResult:
         raw_jobs = await self._fetch_from_source(source)
         return await self._save_jobs(getattr(source, 'name', repr(source)), raw_jobs)
 
-    async def _analyze_job(self, job: Job, semaphore: asyncio.Semaphore,) -> bool:
+    async def _analyze_job(
+            self, 
+            job: Job, 
+            semaphore: asyncio.Semaphore,
+    ) -> tuple[bool, ResultError | None]:
         async with semaphore:
             async with self.session_factory() as session:
                 job_repo = JobRepository(session)
@@ -76,22 +131,98 @@ class JobProcessingService:
                 job_for_analysis = await job_repo.get_job_by_id(job.id)
 
                 if job_for_analysis is None:
-                    logger.warning(f"[analyze] Job {job.id} is not found")
+                    logger.exception(
+                        "[analyze] Job %s is not found",
+                        job.title,
+                    )
 
-                    return False
+                    return (
+                        False,
+                        ResultError(
+                            item_id=str(job.id),
+                            message='Job not found',
+                        )
+                    )
 
                 try:
                     result = await self.analysis_agent.analyze(job)
                     await analysis_repo.save(job.id, result, raw_json=result.model_dump())
                     logger.info("[analyze] OK: %s", job.title)
-                    return True
+                    return True, None
                 
-                except Exception:
+                except Exception as exc:
                     logger.exception("[analyze] Failed: %s", job.title)
-                    return False
-            
-    async def _filter_one_job(self, job: Job, semaphore: asyncio.Semaphore) -> bool:
+                    return (
+                        False,
+                        ResultError(
+                            item_id=str(job.id),
+                            message=str(exc),
+                        )
+                    )
 
+    async def _evaluate_and_save_match(
+            self, 
+            job: Job,
+            analysis: JobAnalysisResult,
+            match_repo: JobMatchRepository,
+    ) -> tuple[bool, ResultError | None]:
+        try:
+            result = await self.filter_agent.evaluate(job, analysis)
+            saved_match = await match_repo.save(result)
+
+            if saved_match is None:
+                logger.warning(
+                    "[filter] Analysis not found for job %s",
+                    job.id,
+                )
+                return (
+                    False,
+                    ResultError(
+                        item_id=str(job.id),
+                        message="Match was not saved"
+                    )
+                )
+            
+            logger.info(f"[filter] {job.title}: {result.status} (score: {result.relevance_score})")
+            return True, None
+
+        except DatabaseConnectionError:
+            raise
+
+        except FilterError as exc:
+            logger.error(
+                "[filter] %s error: %s",
+                job.title,
+                exc,
+            )
+
+            return (
+                False,
+                ResultError(
+                    item_id=str(job.id),
+                    message=str(exc),
+                ),
+            )
+
+        except Exception as exc:
+            logger.exception(
+                '[filter] Unexpected error for %s',
+                job.title
+            )
+
+            return (
+                False,
+                ResultError(
+                    item_id=str(job.id),
+                    message=str(exc),
+                ),
+            )
+           
+    async def _filter_one_job(
+        self, 
+        job: Job, 
+        semaphore: asyncio.Semaphore,
+    ) -> tuple[bool, ResultError | None]:
         async with semaphore:
             async with self.session_factory() as session:
                 analysis_repo = JobAnalysisRepository(session)
@@ -101,49 +232,52 @@ class JobProcessingService:
 
                 if analyzed_job is None:
                     logger.warning(f"'[filter] Not analysis for '{job.title}'")
-                    return False
+                    return (
+                        False,
+                        ResultError(
+                            item_id=str(job.id),
+                            message="Analysis not found",
+                        ),
+                    )
 
-                analysis = JobAnalysisResult(
-                    required_skills=analyzed_job.required_skills,
-                    preferred_skills=analyzed_job.preferred_skills,
-                    responsibilities=analyzed_job.responsibilities,
-                    soft_skills=analyzed_job.raw_json.get('soft_skills', []),
-                    ats_keywords=analyzed_job.ats_keywords,
-                    seniority=analyzed_job.seniority,
-                    min_years_experience=analyzed_job.min_years_experience
+                analysis = self._build_analysis_result(analyzed_job)
+
+                return await self._evaluate_and_save_match(
+                    job,
+                    analysis,
+                    match_repo,
                 )
 
-                try:
-                    result = await self.filter_agent.evaluate(job, analysis)
-                    saved_match = await match_repo.save(result)
-
-                    if saved_match is None:
-                        logger.warning(
-                            f"[filter] Match for job {job.id} was not saved"
-                        )
-                        return False
-                    
-                    logger.info(f"[filter] {job.title}: {result.status} (score: {result.relevance_score})")
-                    return True
-                
-                except FilterError as e:
-                    logger.error(f'[filter] {job.title} error: {e}')
-                    return False
-
-    async def scrape_and_save(self) -> int:
+    async def scrape_and_save(self) -> ServiceResult:
         results =  await asyncio.gather(
-            *(self._process_source(source) for source in self.sources)
+            *(
+                self._process_source(source)
+                for source in self.sources
+            )
         )
 
-        total_saved = 0
-        for result in results:
-            if isinstance(result, DatabaseConnectionError):
-                raise result
-            
-            total_saved += result
-        return total_saved
+        return ServiceResult(
+            total=sum(result.total for result in results),
+            succeeded=sum(
+                result.succeeded
+                for result in results
+            ),
+            skipped=sum(
+                result.skipped
+                for result in results
+            ),
+            failed=sum(
+                result.failed
+                for result in results
+            ),
+            errors=[
+                error
+                for result in results
+                for error in result.errors
+            ],
+        )
     
-    async def analyze_new_jobs(self) -> dict:
+    async def analyze_new_jobs(self) -> ServiceResult:
         async with self.session_factory() as session:
             job_repo = JobRepository(session)
             jobs = await job_repo.get_jobs_without_analysis(
@@ -154,13 +288,26 @@ class JobProcessingService:
 
         semaphore = asyncio.Semaphore(self.ANALYZE_CONCURRENCY)
         tasks = [self._analyze_job(job, semaphore) for job in jobs]
-        result = await asyncio.gather(*tasks)
-        success_count = sum(result)
+        outcomes = await asyncio.gather(*tasks)
 
-        logger.info(f"[analyze] Done: {success_count} из {len(jobs)}")
-        return {"total": len(jobs), "success": success_count}
+        success_count = sum(
+            success for success, error in outcomes
+        )
 
-    async def filter_analyzed_jobs(self):
+        errors = [
+            error
+            for success, error in outcomes
+            if error is not None
+        ]
+
+        return ServiceResult(
+            total=len(jobs),
+            succeeded=success_count,
+            failed=len(errors),
+            errors=errors,
+        )
+    
+    async def filter_analyzed_jobs(self) -> ServiceResult:
         async with self.session_factory() as session:
             job_repo = JobRepository(session)
             jobs = await job_repo.get_analyzed_but_unfiltered_jobs(
@@ -170,17 +317,35 @@ class JobProcessingService:
         logger.info(f'[filter] Found {len(jobs)} vacancies')
 
         semaphore = asyncio.Semaphore(self.FILTER_CONCURRENCY)
-        tasks = [self._filter_one_job(job, semaphore) for job in jobs]
-        result = await asyncio.gather(*tasks)
-        success_count = sum(result)
+        tasks = [
+            self._filter_one_job(job, semaphore) 
+            for job in jobs
+        ]
 
-        logger.info(f"[filter] Done: {success_count} из {len(jobs)}")
-        return {"total": len(jobs), "success": success_count}
+        outcomes = await asyncio.gather(*tasks)
+
+        success_count = sum(
+            success
+            for success, error in outcomes
+        )
+
+        errors = [
+            error
+            for success, error in outcomes
+            if error is not None
+        ]
+
+        return ServiceResult(
+            total=len(jobs),
+            succeeded=success_count,
+            failed=len(errors),
+            errors=errors,
+        )
+        
    
-    async def run_full_cycle(self) -> dict:
+    async def run_full_cycle(self) -> PipelineResult:
         logger.info("=== Starting full pipeline cycle ===")
 
-        scraped = 0
         try:
             scraped = await self.scrape_and_save()
 
@@ -190,16 +355,18 @@ class JobProcessingService:
             )
             raise
        
-        total_analyzed = await self.analyze_new_jobs()
-        total_filtered = await self.filter_analyzed_jobs()
+        analyzed = await self.analyze_new_jobs()
+        filtered = await self.filter_analyzed_jobs()
 
         logger.info(f'=== Pipeline cycle finished ===')
 
-        return {
-            'scraped': scraped,
-            'analyzed': total_analyzed,
-            'filtered': total_filtered 
-        }
+        return PipelineResult(
+            scrapped=scraped,
+            analyzed=analyzed,
+            filtered=filtered
+        )
+
+        
 
     
         

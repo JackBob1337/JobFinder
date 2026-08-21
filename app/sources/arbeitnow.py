@@ -10,6 +10,7 @@ def strip_html(raw_html: str) -> str:
 
 class ArbeitnowSource(JobSource):
     BASE_URL = "https://www.arbeitnow.com/api/job-board-api"
+    name = JobSourceEnum.ARBEITNOW.value
 
     async def fetch_jobs(self) -> list[RawJob]:
         async with httpx.AsyncClient() as client:
